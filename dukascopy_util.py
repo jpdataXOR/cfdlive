@@ -1,3 +1,8 @@
+"""
+dukascopy_util.py
+
+Utility module to fetch historical chart data from Dukascopy via JSONP.
+"""
 import requests
 import random
 import string
@@ -5,72 +10,130 @@ import time
 import json
 import pandas as pd
 
-def generate_jsonp():
-    """Generate a random JSONP callback name."""
-    return "_callbacks____" + "".join(random.choices(string.ascii_letters + string.digits, k=8))
+# Default browser-like User-Agent
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/134.0.0.0 Safari/537.36"
+)
 
-def get_current_utc_timestamp():
-    """Get current UTC timestamp in milliseconds."""
+
+def generate_jsonp_callback() -> str:
+    """Generate a random JSONP callback function name."""
+    prefix = "_callbacks____"
+    suffix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
+    return prefix + suffix
+
+
+def get_current_utc_timestamp_ms() -> str:
+    """Return current UTC timestamp in milliseconds as string."""
     return str(int(time.time() * 1000))
 
-def extract_json_from_jsonp(jsonp_response):
-    """Extract JSON data from a JSONP response."""
-    start_idx = jsonp_response.find("(") + 1
-    end_idx = jsonp_response.rfind(")")
 
-    if start_idx > 0 and end_idx > start_idx:
-        try:
-            json_data = jsonp_response[start_idx:end_idx]
-            return json.loads(json_data)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"JSON Decoding Error: {e}")
-    else:
-        raise ValueError("Invalid JSONP response format")
+def extract_json_from_jsonp(jsonp_text: str) -> object:
+    """Extract the JSON payload from a JSONP response text."""
+    start = jsonp_text.find("(") + 1
+    end = jsonp_text.rfind(")")
+    if start <= 0 or end <= start:
+        raise ValueError("Invalid JSONP response format.")
+    payload = jsonp_text[start:end]
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Error decoding JSON: {e}")
 
-def fetch_stock_indices_data(instrument, offer_side="B", interval="15MIN", limit=25, time_direction="P"):
+
+def fetch_stock_indices_data(
+    instrument: str,
+    offer_side: str = "B",
+    interval: str = "15MIN",
+    limit: int = 25,
+    time_direction: str = "P",
+    user_agent: str = DEFAULT_USER_AGENT
+) -> pd.DataFrame:
     """
-    Fetch stock indices data from Dukascopy.
+    Fetch historical price data for a given instrument from Dukascopy.
 
-    Parameters:
-    - instrument (str): The financial instrument (e.g., "EUR/USD").
-    - offer_side (str): The offer side, "B" for bid or "A" for ask. Default is "B".
-    - interval (str): The data interval (e.g., "1MIN", "1H"). Default is "15MIN".
-    - limit (int): The number of data points to fetch. Default is 10.
-    - time_direction (str): The time direction, "P" for past or "N" for next. Default is "P".
+    Parameters
+    ----------
+    instrument : str
+        Instrument symbol, e.g., "EUR/USD".
+    offer_side : str, default "B"
+        "B" for bid, "A" for ask.
+    interval : str, default "15MIN"
+        Data interval: "TICK", "1SEC", "10SEC", "30SEC", "1MIN", "5MIN", "15MIN", "30MIN", "1H", "4H", "1D", "1W", "1M".
+    limit : int, default 25
+        Number of data points to retrieve.
+    time_direction : str, default "P"
+        "P" for past data; "N" for future (rarely used).
+    user_agent : str
+        HTTP User-Agent header to mimic a browser.
 
-    Returns:
-    - pd.DataFrame: DataFrame containing the stock indices data.
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame indexed by Date with columns [Open, High, Low, Close, Volume].
     """
-    timestamp = get_current_utc_timestamp()
-    jsonp_callback = generate_jsonp()
+    # Build URL
+    timestamp = get_current_utc_timestamp_ms()
+    callback = generate_jsonp_callback()
+    encoded_inst = requests.utils.quote(instrument, safe="")
+    url = (
+        "https://freeserv.dukascopy.com/2.0/index.php"
+        f"?path=chart%2Fjson3"
+        f"&instrument={encoded_inst}"
+        f"&offer_side={offer_side}"
+        f"&interval={interval}"
+        "&splits=true"
+        "&stocks=true"
+        f"&limit={limit}"
+        f"&time_direction={time_direction}"
+        f"&timestamp={timestamp}"
+        f"&jsonp={callback}"
+    )
 
-    url = f"https://freeserv.dukascopy.com/2.0/index.php?path=chart%2Fjson3&instrument={instrument}&offer_side={offer_side}&interval={interval}&splits=true&stocks=true&limit={limit}&time_direction={time_direction}&timestamp={timestamp}&jsonp={jsonp_callback}"
-
+    # Headers to mimic a browser request
     headers = {
-        "authority": "freeserv.dukascopy.com",
-        "accept": "*/*",
-        "referer": "https://freeserv.dukascopy.com",
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-mode": "no-cors"
+        "User-Agent": user_agent,
+        "Accept": "*/*",
+        "Referer": "https://freeserv.dukascopy.com",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "no-cors",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
     }
 
+    # Perform HTTP GET
     response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        jsonp_text = response.text
-        json_data = extract_json_from_jsonp(jsonp_text)
-        
-        # Convert to DataFrame and rename columns to match yfinance format
-        df = pd.DataFrame(json_data, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    response.raise_for_status()
+    jsonp_text = response.text
+
+    # Parse JSONP and extract data
+    data = extract_json_from_jsonp(jsonp_text)
+
+    # Normalize into DataFrame
+    if isinstance(data, list) and data and isinstance(data[0], list):
+        df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.rename(columns={
-            "timestamp": "Date",
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume"
-        }, inplace=True)
-        df.set_index("Date", inplace=True)
-        return df
+    elif isinstance(data, dict):
+        df = pd.DataFrame(data)
+        # Identify the time column
+        time_col = "timestamp" if "timestamp" in df.columns else next(
+            (col for col in df.columns if "date" in col.lower()), "timestamp"
+        )
+        df[time_col] = pd.to_datetime(df[time_col], unit="ms")
+        df.rename(columns={time_col: "timestamp"}, inplace=True)
     else:
-        response.raise_for_status()
+        raise ValueError(f"Unexpected JSON format: {type(data)}")
+
+    # Finalize DataFrame
+    df.rename(columns={
+        "timestamp": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume"
+    }, inplace=True)
+    df.set_index("Date", inplace=True)
+    return df
