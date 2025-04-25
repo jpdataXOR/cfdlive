@@ -1,73 +1,47 @@
 import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
 from datetime import datetime, timezone
 from dukascopy_util import fetch_stock_indices_data
+from analysisapp import run_strategy_analysis
+from charting import display_chart_and_table
 
-# Streamlit UI
-st.title("📊 Dukascopy JSONP Data Fetcher & Plotter")
+# Streamlit UI Setup
+st.title("📊 Dukascopy JSONP Data Fetcher & Strategy Analyzer")
 
 # Display Current UTC Time
 current_utc = datetime.now(timezone.utc)
 st.write(f"⏰ **Current UTC Time:** {current_utc.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Available Intervals
+# Intervals
 interval_options = {
-    "Tick": "TICK",
-    "1 Second": "1SEC",
-    "10 Second": "10SEC",
-    "30 Second": "30SEC",
-    "1 Minute": "1MIN",
-    "5 Minute": "5MIN",
-    "10 Minute": "10MIN",
     "15 Minute": "15MIN",
-    "30 Minute": "30MIN",
-    "1 Hour": "1H",
-    "4 Hour": "4H",
-    "1 Day": "1D",
-    "1 Week": "1W",
-    "1 Month": "1M"
+    "1 Hour": "1HOUR",
+    "1 Day": "1DAY"
 }
 
-instrument = st.text_input("Instrument (e.g., EUR/USD)", "EUR/USD")
-offer_side = st.selectbox("Offer Side", ["B", "A"], index=0)  # Default: B
-interval = st.selectbox("Interval", list(interval_options.keys()), index=7)  # Default: 15 Minute
-limit = st.number_input("Limit", min_value=1, value=10)  # Default: 10
-time_direction = st.selectbox("Time Direction", ["P", "N"], index=0)  # Default: P
+# Inputs
+instrument_list = ["EUR/USD", "E_XJO-ASX", "E_NQ-10"]
+instrument = st.selectbox("Instrument", instrument_list, index=0)
+offer_side = st.selectbox("Offer Side", ["B", "A"], index=0)
+interval = st.selectbox("Interval", list(interval_options.keys()), index=0)
+limit = st.number_input("Limit", min_value=1, value=100)
+time_direction = st.selectbox("Time Direction", ["P", "N"], index=0)
 
-# Fetch Data Button
-if st.button("Fetch Data"):
+# Fetch Button
+if st.button("Fetch & Analyze"):
     try:
-        st.write("🔹 Sending Request...")
-        df = fetch_stock_indices_data(instrument, offer_side, interval_options[interval], limit, time_direction)
+        st.write("🔹 Fetching Data...")
+        df = fetch_stock_indices_data(
+            instrument, offer_side, interval_options[interval], limit, time_direction
+        )
 
         if not df.empty:
-            st.write("✅ Successfully Extracted Data!")
+            st.success("✅ Data Fetched Successfully!")
+            st.write(f"📅 First Date: {df.index[0]}, Last Date: {df.index[-1]}")
 
-            # Debugging Info
-            st.write(f"📅 **First Date in Data:** {df.index[0]}")
-            st.write(f"📅 **Last Date in Data:** {df.index[-1]}")
-            st.write(f"📊 **Total Timestamp Points Extracted:** {len(df)}")
-
-            # Display Data
-            st.write("🔹 Displaying first 5 rows of data:")
-            st.dataframe(df.head())
-
-            # Plot Candlestick Chart with Plotly
-            fig = go.Figure(data=[go.Candlestick(
-                x=df.index,
-                open=df["Open"],
-                high=df["High"],
-                low=df["Low"],
-                close=df["Close"],
-                name="Price",
-            )])
-
-            fig.update_layout(title=f"Candlestick Chart for {instrument}", xaxis_title="Timestamp", yaxis_title="Price")
-            st.plotly_chart(fig)
-
+            # Run simple strategy and display
+            results = run_strategy_analysis(df)
+            display_chart_and_table(df, results)
         else:
-            st.error("❌ Failed to extract JSON data.")
-
+            st.error("❌ No data received.")
     except Exception as e:
-        st.error(f"❌ Error fetching data: {e}")
+        st.error(f"❌ Error: {e}")
