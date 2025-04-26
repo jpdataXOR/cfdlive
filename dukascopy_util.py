@@ -136,4 +136,9 @@ def fetch_stock_indices_data(
         "volume": "Volume"
     }, inplace=True)
     df.set_index("Date", inplace=True)
+
+    # Sort the index to ensure chronological order (ADDED)
+    df.sort_index(ascending=True, inplace=True)
+
+
     return df
